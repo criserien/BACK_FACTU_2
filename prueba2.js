@@ -5,24 +5,32 @@ const mysql = require('mysql2');
 const cors = require('cors'); 
 const app = express();
 
-// Middlewares
+// Middlewares - Configuración de CORS optimizada para Vercel
 const allowedOrigins = [
     'http://localhost:4200',            // Desarrollo local
-    'https://fact-electr.onrender.com', // Frontend real en producción 
-    'https://front-factu-2.vercel.app',
+    'https://fact-electr.onrender.com', // Frontend real en producción (Render)
+    'https://front-factu-2.vercel.app', // Frontend real en producción (Vercel)
     process.env.FRONTEND_URL
 ].filter(Boolean); // Filtramos valores undefined o vacíos de forma segura
 
 app.use(cors({
     origin: function (origin, callback) {
-        // Permite peticiones sin origen (como Postman o llamadas internas del mismo servidor)
+        // Permitir peticiones sin origen (ej. Postman o llamadas del propio servidor)
         if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) !== -1) {
+        
+        // Comprobar si el origen está en la lista de permitidos
+        const isAllowed = allowedOrigins.indexOf(origin) !== -1;
+        
+        // Opcional: Permitir dinámicamente cualquier subdominio de Vercel del proyecto
+        const isVercelPreview = origin.endsWith('.vercel.app');
+
+        if (isAllowed || isVercelPreview) {
             callback(null, true);
         } else {
             callback(new Error('Bloqueado por políticas de CORS (Vercel)'));
         }
-    }
+    },
+    credentials: true
 })); 
 
 app.use(express.json());
@@ -38,22 +46,22 @@ const poolConfig = process.env.DATABASE_URL
         port: parseInt(process.env.DB_PORT) || 4000, 
       };
 
-// Añadimos las configuraciones globales necesarias para TiDB
+// Ajustes específicos para Serverless (Vercel) + TiDB
 const db = mysql.createPool({
     ...poolConfig,
-    multipleStatements: true, // Se mantiene activo para el endpoint de guardado por lotes (POST)
+    multipleStatements: true, // Requerido para el insert masivo
     ssl: {
         minVersion: 'TLSv1.2',
         rejectUnauthorized: true 
     },
     waitForConnections: true,
-    connectionLimit: 10,       
+    connectionLimit: 3,       // Reducido de 10 a 3 para no saturar TiDB en Serverless
     queueLimit: 0,
     enableKeepAlive: true,     
     keepAliveInitialDelay: 10000 
 });
 
-console.log('🚀 Pool de conexiones a TiDB Cloud inicializado correctamente');
+console.log('🚀 Pool de conexiones a TiDB Cloud inicializado');
 
 // ========================================
 // RUTAS Y ENDPOINTS
@@ -137,7 +145,7 @@ app.get('/api/facturas/:id', (req, res) => {
     });
 });
 
-// Obtener el total de registros de fechas en la tabla facturas (Seguro y tipado)
+// Obtener el total de registros de fechas en la tabla facturas
 app.get('/api/facturas-count-fechas/:dia/:mes/:anio', (req, res) => {
     const dia = parseInt(req.params.dia, 10);
     const mes = parseInt(req.params.mes, 10);
@@ -159,7 +167,7 @@ app.get('/api/facturas-count-fechas/:dia/:mes/:anio', (req, res) => {
     });
 });
 
-// FACTURA COMPLETA POR FECHA: Une la factura principal con sus datos asociados de las tablas 2 a 9
+// FACTURA COMPLETA POR FECHA
 app.get('/api/facturas-fecha/:dia/:mes/:anio', (req, res) => {
     const dia = parseInt(req.params.dia, 10);
     const mes = parseInt(req.params.mes, 10);
@@ -181,20 +189,18 @@ app.get('/api/facturas-fecha/:dia/:mes/:anio', (req, res) => {
             return res.status(404).json({ message: 'No se encontraron facturas' });
         }
 
-        // Buscamos los datos relacionados de forma asíncrona e individual para cada factura encontrada
         const promesas = facturasPrincipales.map(factura => {
             return new Promise((resolve) => {
                 const idRef = factura.id;
-                
-                // Arreglo para almacenar las 8 promesas correspondientes a las subtablas
                 const consultasTablas = [];
+
                 for (let i = 2; i <= 9; i++) {
                     consultasTablas.push(
                         new Promise((resSub) => {
                             db.query(`SELECT * FROM facturas${i} WHERE id = ?`, [idRef], (subErr, rows) => {
                                 if (subErr) {
                                     console.error(`⚠️ Error al consultar facturas${i} para ID ${idRef}:`, subErr.message);
-                                    resSub(null); // No rompemos toda la ejecución si falla una subtabla, enviamos null
+                                    resSub(null); 
                                 } else {
                                     resSub(rows && rows[0] ? rows[0] : null);
                                 }
@@ -203,7 +209,6 @@ app.get('/api/facturas-fecha/:dia/:mes/:anio', (req, res) => {
                     );
                 }
 
-                // Esperamos que se ejecuten las 8 subconsultas de esta factura en paralelo
                 Promise.all(consultasTablas).then((resultados) => {
                     factura.detallesOpcionales = {
                         factura2: resultados[0],
@@ -220,7 +225,6 @@ app.get('/api/facturas-fecha/:dia/:mes/:anio', (req, res) => {
             });
         });
 
-        // Resolvemos todo y enviamos la respuesta al cliente
         Promise.all(promesas)
             .then(resultadosCompletos => {
                 res.json(resultadosCompletos);
@@ -247,7 +251,7 @@ app.get('/api/facturas-premio/:cliente', (req, res) => {
     });
 });
 
-// FACTURAS 2 AL 9 (Endpoints individuales por si se necesitan consultar de forma aislada)
+// FACTURAS 2 AL 9
 for (let i = 2; i <= 9; i++) {
     app.get(`/api/facturas${i}/:id`, (req, res) => {
         const { id } = req.params;
