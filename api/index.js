@@ -262,6 +262,7 @@ app.get('/api/facturas-count', async (req, res) => {
         const [rows] = await db.query('SELECT COUNT(*) AS total FROM facturas');
         res.json({ total: rows[0].total });
     } catch (err) {
+        console.error('Error en facturas-count2:', error);
         res.status(500).json({ error: 'Error interno del servidor', detalles: err.message });
     }
 });
