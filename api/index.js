@@ -263,7 +263,11 @@ app.get('/api/facturas-count', async (req, res) => {
         res.json({ total: rows[0].total });
     } catch (err) {
         console.error('Error en facturas-count2:', error);
-        res.status(500).json({ error: 'Error interno del servidor', detalles: err.message });
+        res.status(500).json({
+            message: 'Error en la base de datos',
+            error: error.message,
+            code: error.code
+    });
     }
 });
 
