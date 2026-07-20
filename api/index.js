@@ -32,10 +32,11 @@ app.use(express.json());
 
 // CONFIGURACIÓN DE PARÁMETROS BASE PARA TiDB
 const commonDbOptions = {
-    host: process.env.DB_HOST || 'gateway01.us-east-1.prod.aws.tidbcloud.com', 
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    port: parseInt(process.env.DB_PORT) || 4000,
+    host: process.env.DB_HOST || 'gateway01.us-east-1.prod.aws.tidbcloud.com',
+    port: process.env.DB_PORT || 4000,
+    user: process.env.DB_USER || '2ZDrKTLDPGJvTXB.root', // El prefijo antes del punto es OBLIGATORIO
+    password: process.env.DB_PASSWORD || 'uR4F9z1aNJYgMajf',
+    database: process.env.DB_NAME || 'test',
     multipleStatements: true,
     ssl: {
         minVersion: 'TLSv1.2',
