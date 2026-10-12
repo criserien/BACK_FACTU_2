@@ -14,12 +14,12 @@ const allowedOrigins = [
     'https://fact-electr.onrender.com',
     'https://front-factu-2.vercel.app',
     'https://back-fac-elect.vercel.app',
+    'https://back-factu-2.vercel.app',
     process.env.FRONTEND_URL
 ].filter(Boolean);
 
 app.use(cors({
     origin: function (origin, callback) {
-        // Permite requests sin origin (Postman, curl, mismo dominio)
         if (!origin) return callback(null, true);
 
         const isAllowed = allowedOrigins.includes(origin);
@@ -390,7 +390,8 @@ app.get('/api/ultima-factura', async (req, res) => {
     try {
         const [rows] = await db.query('SELECT MAX(numero) AS ultimo FROM facturas');
         const ultimo = Number(rows?.[0]?.ultimo) || 0;
-        res.json({ ultimo });
+        // Devolvemos 3 alias por compatibilidad con cualquier versión del frontend
+        res.json({ ultimo, numero: ultimo, ultimoNumero: ultimo });
     } catch (err) {
         console.error('Error al obtener el último número de factura:', err);
         res.status(500).json({ error: 'Error interno del servidor', detalles: err.message });
