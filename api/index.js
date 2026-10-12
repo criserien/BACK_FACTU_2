@@ -263,12 +263,12 @@ app.get('/api/facturas-count', async (req, res) => {
         const [rows] = await db.query('SELECT COUNT(*) AS total FROM facturas');
         res.json({ total: rows[0].total });
     } catch (err) {
-        console.error('Error en facturas-count2:', error);
+        console.error('Error en facturas-count2:', err);
         res.status(500).json({
             message: 'Error en la base de datos',
-            error: error.message,
-            code: error.code
-    });
+            error: err.message,
+            code: err.code
+        });
     }
 });
 
@@ -380,6 +380,18 @@ for (let i = 2; i <= 9; i++) {
         }
     });
 }
+
+// 10. Obtener el número de factura más alto (para calcular el siguiente)
+app.get('/api/ultima-factura', async (req, res) => {
+    try {
+        const [rows] = await db.query('SELECT MAX(numero) AS ultimo FROM facturas');
+        const ultimo = Number(rows?.[0]?.ultimo) || 0;
+        res.json({ ultimo });
+    } catch (err) {
+        console.error('Error al obtener el último número de factura:', err);
+        res.status(500).json({ error: 'Error interno del servidor', detalles: err.message });
+    }
+});
 
 // GET - Traer facturas por fecha desde BD2
 app.get('/api/facturas-fecha-db2/:dia/:mes/:anio', async (req, res) => {
