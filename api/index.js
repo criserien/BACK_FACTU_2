@@ -1,67 +1,78 @@
 require('dotenv').config(); // <-- ESTA LÍNEA DEBE SER LA PRIMERA
 
 const express = require('express');
-const mysql = require('mysql2/promise'); // <-- Cambiado a la versión de promesas
-const cors = require('cors'); 
+const mysql = require('mysql2/promise');
+const cors = require('cors');
 const app = express();
 
-// Middlewares - Configuración de CORS optimizada para Vercel
+// ============================================================
+// CORS — Configuración robusta para Vercel + localhost
+// ============================================================
 const allowedOrigins = [
-    'http://localhost:4200',            // Desarrollo local
-    'https://fact-electr.onrender.com', // Frontend real en producción (Render)
-    'https://front-factu-2.vercel.app', // Frontend real en producción (Vercel)
+    'http://localhost:4200',
+    'http://localhost:3000',
+    'https://fact-electr.onrender.com',
+    'https://front-factu-2.vercel.app',
+    'https://back-fac-elect.vercel.app',
     process.env.FRONTEND_URL
 ].filter(Boolean);
 
 app.use(cors({
     origin: function (origin, callback) {
+        // Permite requests sin origin (Postman, curl, mismo dominio)
         if (!origin) return callback(null, true);
-        const isAllowed = allowedOrigins.indexOf(origin) !== -1;
-        const isVercelPreview = origin.endsWith('.vercel.app');
 
-        if (isAllowed || isVercelPreview) {
+        const isAllowed = allowedOrigins.includes(origin);
+        const isVercel = origin.endsWith('.vercel.app');
+        const isLocalhost = /^http:\/\/localhost(:\d+)?$/.test(origin);
+
+        if (isAllowed || isVercel || isLocalhost) {
             callback(null, true);
         } else {
-            callback(new Error('Bloqueado por políticas de CORS (Vercel)'));
+            console.warn('❌ Origen bloqueado por CORS:', origin);
+            callback(new Error('Bloqueado por políticas de CORS'));
         }
     },
-    credentials: true
-})); 
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Responder explícitamente al preflight OPTIONS (Express 5 usa /*splat)
+app.options('/*splat', cors());
 
 app.use(express.json());
 
+// ============================================================
 // CONFIGURACIÓN DE PARÁMETROS BASE PARA TiDB
+// ============================================================
 const commonDbOptions = {
     host: process.env.DB_HOST || 'gateway01.us-east-1.prod.aws.tidbcloud.com',
     port: process.env.DB_PORT || 4000,
-    user: process.env.DB_USER || '2ZDrKTLDPGJvTXB.root', // El prefijo antes del punto es OBLIGATORIO
+    user: process.env.DB_USER || '2ZDrKTLDPGJvTXB.root',
     password: process.env.DB_PASSWORD || 'uR4F9z1aNJYgMajf',
     database: process.env.DB_NAME || 'test',
     multipleStatements: true,
     ssl: {
         minVersion: 'TLSv1.2',
-        rejectUnauthorized: true 
+        rejectUnauthorized: true
     },
     waitForConnections: true,
     connectionLimit: 3,
     queueLimit: 0,
-    enableKeepAlive: true, 
-    keepAliveInitialDelay: 10000 
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000
 };
 
-// =========================================================================
-// CREACIÓN DE LOS 2 POOLS DE CONEXIÓN
-// =========================================================================
-
-// 1. Pool Principal (BD 1)
-const poolConfig1 = process.env.DATABASE_URL 
+// ============================================================
+// POOLS DE CONEXIÓN (BD 1 y BD 2)
+// ============================================================
+const poolConfig1 = process.env.DATABASE_URL
     ? { uri: process.env.DATABASE_URL }
     : { ...commonDbOptions, database: process.env.DB_NAME || 'test' };
 
 const db = mysql.createPool(poolConfig1);
 
-// 2. Pool Secundario en TiDB (BD 2)
-// Asegúrate de definir DB_NAME_2 en tu archivo .env o en las variables de Vercel/Render
 const poolConfig2 = process.env.DATABASE_URL_2
     ? { uri: process.env.DATABASE_URL_2 }
     : { ...commonDbOptions, database: process.env.DB_NAME_2 || 'test2' };
@@ -70,14 +81,14 @@ const db2 = mysql.createPool(poolConfig2);
 
 console.log('🚀 Pools de conexiones a TiDB Cloud (BD 1 y BD 2) inicializados');
 
-// ========================================
+// ============================================================
 // RUTAS Y ENDPOINTS
-// ========================================
+// ============================================================
 
-// 1. Guardar el bloque de las 9 facturas en AMBAS bases de datos paralelamente
+// 1. Guardar el bloque de las 9 facturas en AMBAS bases de datos
 app.post('/factura', async (req, res) => {
-    const { 
-        producto, cantidad, total, numero, dia, mes, anio, cliente, direc_tel, total_mayor, 
+    const {
+        producto, cantidad, total, numero, dia, mes, anio, cliente, direc_tel, total_mayor,
         producto2, cantidad2, total2, total_mayor2,
         producto3, cantidad3, total3, total_mayor3,
         producto4, cantidad4, total4, total_mayor4,
@@ -91,18 +102,15 @@ app.post('/factura', async (req, res) => {
     let conn1, conn2;
 
     try {
-        // Pedir conexiones de ambos pools
         conn1 = await db.getConnection();
         conn2 = await db2.getConnection();
 
-        // Iniciar transacciones en ambas BD
         await conn1.beginTransaction();
         await conn2.beginTransaction();
 
         const sqlPrincipal = `INSERT INTO facturas (producto, cantidad, total, numero, dia, mes, anio, cliente, direc_tel, total_mayor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         const valuesPrincipal = [producto, cantidad, total, numero, dia, mes, anio, cliente, direc_tel, total_mayor];
 
-        // Inserciones principales
         const [res1] = await conn1.query(sqlPrincipal, valuesPrincipal);
         const [res2] = await conn2.query(sqlPrincipal, valuesPrincipal);
 
@@ -142,22 +150,19 @@ app.post('/factura', async (req, res) => {
             nuevoId2, producto9, cantidad9, total9, total_mayor9
         ];
 
-        // Inserciones en tablas secundarias en ambas BD
         await conn1.query(sqlSecundarias, valuesSecundarias1);
         await conn2.query(sqlSecundarias, valuesSecundarias2);
 
-        // Confirmar cambios
         await conn1.commit();
         await conn2.commit();
 
-        res.status(201).send({ 
-            message: 'Las 9 facturas han sido guardadas correctamente en ambas bases de datos', 
+        res.status(201).send({
+            message: 'Las 9 facturas han sido guardadas correctamente en ambas bases de datos',
             id_bd1: nuevoId1,
             id_bd2: nuevoId2
         });
 
     } catch (error) {
-        // En caso de error, hacer rollback en ambas bases de datos
         if (conn1) await conn1.rollback();
         if (conn2) await conn2.rollback();
 
@@ -165,7 +170,6 @@ app.post('/factura', async (req, res) => {
         res.status(500).send({ message: 'Error al procesar el guardado dual', error: error.message });
 
     } finally {
-        // Liberar las conexiones siempre
         if (conn1) conn1.release();
         if (conn2) conn2.release();
     }
@@ -174,8 +178,8 @@ app.post('/factura', async (req, res) => {
 // 2. Actualizar factura existente
 app.put('/api/facturas/:id', async (req, res) => {
     const { id } = req.params;
-    const { 
-        producto, cantidad, total, numero, dia, mes, anio, cliente, direc_tel, total_mayor, 
+    const {
+        producto, cantidad, total, numero, dia, mes, anio, cliente, direc_tel, total_mayor,
         producto2, cantidad2, total2, total_mayor2,
         producto3, cantidad3, total3, total_mayor3,
         producto4, cantidad4, total4, total_mayor4,
@@ -238,7 +242,7 @@ app.delete('/api/facturas/:id', async (req, res) => {
 
         const numeroFactura = facturaData[0].numero;
         const tablasProductos = [
-            'facturas', 'facturas2', 'facturas3', 'facturas4', 'facturas5', 
+            'facturas', 'facturas2', 'facturas3', 'facturas4', 'facturas5',
             'facturas6', 'facturas7', 'facturas8', 'facturas9'
         ];
 
@@ -257,13 +261,13 @@ app.delete('/api/facturas/:id', async (req, res) => {
     }
 });
 
-// 4. Obtener total de registros
+// 4. Obtener total de registros BD1
 app.get('/api/facturas-count', async (req, res) => {
     try {
         const [rows] = await db.query('SELECT COUNT(*) AS total FROM facturas');
         res.json({ total: rows[0].total });
     } catch (err) {
-        console.error('Error en facturas-count2:', err);
+        console.error('Error en facturas-count:', err);
         res.status(500).json({
             message: 'Error en la base de datos',
             error: err.message,
@@ -272,7 +276,7 @@ app.get('/api/facturas-count', async (req, res) => {
     }
 });
 
-// 4.1. Obtener total de registros
+// 4.1. Obtener total de registros BD2
 app.get('/api/facturas-count2', async (req, res) => {
     try {
         const [rows] = await db2.query('SELECT COUNT(*) AS total FROM facturas');
@@ -284,7 +288,7 @@ app.get('/api/facturas-count2', async (req, res) => {
 
 // 5. Obtener por ID
 app.get('/api/facturas/:id', async (req, res) => {
-    const { id } = req.params; 
+    const { id } = req.params;
     try {
         const [rows] = await db.query('SELECT * FROM facturas WHERE id = ?', [id]);
         if (rows.length === 0) {
@@ -393,14 +397,13 @@ app.get('/api/ultima-factura', async (req, res) => {
     }
 });
 
-// GET - Traer facturas por fecha desde BD2
+// 11. Traer facturas por fecha desde BD2
 app.get('/api/facturas-fecha-db2/:dia/:mes/:anio', async (req, res) => {
     const { dia, mes, anio } = req.params;
     try {
         const [rows] = await db2.query('SELECT * FROM facturas WHERE dia = ? AND mes = ? AND anio = ?', [dia, mes, anio]);
         if (!rows || rows.length === 0) return res.status(404).json({ message: 'No se encontraron facturas en BD2' });
-        
-        // Cargar detalles opcionales desde BD2
+
         const resultados = await Promise.all(rows.map(async (factura) => {
             factura.detallesOpcionales = {};
             for (let i = 2; i <= 9; i++) {
@@ -419,7 +422,7 @@ app.get('/api/facturas-fecha-db2/:dia/:mes/:anio', async (req, res) => {
     }
 });
 
-// GET - Conteo por fecha desde BD2
+// 12. Conteo por fecha desde BD2
 app.get('/api/facturas-count-fechas-db2/:dia/:mes/:anio', async (req, res) => {
     const { dia, mes, anio } = req.params;
     try {
@@ -430,7 +433,7 @@ app.get('/api/facturas-count-fechas-db2/:dia/:mes/:anio', async (req, res) => {
     }
 });
 
-// PUT - Actualizar factura en BD2
+// 13. Actualizar factura en BD2
 app.put('/api/facturas-db2/:id', async (req, res) => {
     const { id } = req.params;
     const body = req.body;
@@ -467,7 +470,7 @@ app.put('/api/facturas-db2/:id', async (req, res) => {
     }
 });
 
-// DELETE - Eliminar en BD2
+// 14. Eliminar en BD2
 app.delete('/api/facturas-db2/:id', async (req, res) => {
     const { id } = req.params;
     try {
@@ -481,9 +484,11 @@ app.delete('/api/facturas-db2/:id', async (req, res) => {
     }
 });
 
-// LEVANTAR EN LOCAL O EXPORTAR
+// ============================================================
+// LEVANTAR EN LOCAL O EXPORTAR PARA VERCEL
+// ============================================================
 if (process.env.NODE_ENV !== 'production') {
-    const PORT = process.env.PORT || 3000; 
+    const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
         console.log(`✅ Servidor Express corriendo localmente en el puerto ${PORT}`);
     });
