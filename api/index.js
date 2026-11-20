@@ -261,6 +261,43 @@ app.delete('/api/facturas/:id', async (req, res) => {
     }
 });
 
+app.get('/api/facturas-suma-mes-total/:mes/:anio', async (req, res) => {
+    const mes = parseInt(req.params.mes, 10);
+    const anio = parseInt(req.params.anio, 10);
+    if (isNaN(mes) || isNaN(anio)) {
+        return res.status(400).json({ error: 'mes y anio deben ser números' });
+    }
+
+    try {
+        // Suma del producto principal (tabla facturas)
+        const [principal] = await db.query(
+            'SELECT COALESCE(SUM(total), 0) AS suma FROM facturas WHERE mes = ? AND anio = ?',
+            [mes, anio]
+        );
+
+        // Suma de los 8 productos secundarios
+        let sumaSecundarios = 0;
+        for (let i = 2; i <= 9; i++) {
+            const [r] = await db.query(
+                `SELECT COALESCE(SUM(f${i}.total), 0) AS suma
+                 FROM facturas f
+                 JOIN facturas${i} f${i} ON f${i}.id = f.id
+                 WHERE f.mes = ? AND f.anio = ?`,
+                [mes, anio]
+            );
+            sumaSecundarios += Number(r[0].suma);
+        }
+
+        res.json({
+            suma_principal: Number(principal[0].suma),
+            suma_secundarios: sumaSecundarios,
+            suma_total_mes: Number(principal[0].suma) + sumaSecundarios
+        });
+    } catch (err) {
+        res.status(500).json({ error: 'Error interno', detalles: err.message });
+    }
+});
+
 // 4. Obtener total de registros BD1
 app.get('/api/facturas-count', async (req, res) => {
     try {
