@@ -269,31 +269,37 @@ app.get('/api/facturas-suma-mes-total/:mes/:anio', async (req, res) => {
     }
 
     try {
-        // Suma del producto principal (tabla facturas)
+        // Suma del producto principal
         const [principal] = await db.query(
-            'SELECT COALESCE(SUM(total), 0) AS suma FROM facturas WHERE mes = ? AND anio = ?',
+            'SELECT COALESCE(SUM(total), 0) AS suma, COUNT(*) AS total_facturas FROM facturas WHERE mes = ? AND anio = ?',
             [mes, anio]
         );
 
-        // Suma de los 8 productos secundarios
+        // Suma de secundarios: LEFT JOIN para no perder facturas sin producto secundario
         let sumaSecundarios = 0;
         for (let i = 2; i <= 9; i++) {
             const [r] = await db.query(
                 `SELECT COALESCE(SUM(f${i}.total), 0) AS suma
                  FROM facturas f
-                 JOIN facturas${i} f${i} ON f${i}.id = f.id
+                 LEFT JOIN facturas${i} f${i} ON f${i}.id = f.id
                  WHERE f.mes = ? AND f.anio = ?`,
                 [mes, anio]
             );
-            sumaSecundarios += Number(r[0].suma);
+            sumaSecundarios += Number(r?.[0]?.suma) || 0;
         }
 
+        const sumaPrincipal = Number(principal[0].suma);
+
         res.json({
-            suma_principal: Number(principal[0].suma),
+            mes,
+            anio,
+            total_facturas: Number(principal[0].total_facturas),
+            suma_principal: sumaPrincipal,
             suma_secundarios: sumaSecundarios,
-            suma_total_mes: Number(principal[0].suma) + sumaSecundarios
+            suma_total_mes: sumaPrincipal + sumaSecundarios
         });
     } catch (err) {
+        console.error('Error en suma mensual:', err);
         res.status(500).json({ error: 'Error interno', detalles: err.message });
     }
 });
